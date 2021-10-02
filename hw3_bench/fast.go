@@ -1,21 +1,12 @@
 package main
 
 import (
-	"bufio"
-	"fmt"
 	"io"
-	"os"
-	"strings"
 )
 
-const fPath string = "./data/users.txt"
-
-type User struct {
-	Name     string   `json:"name"`
-	Email    string   `json:"email"`
-	Browsers []string `json:"browsers"`
-}
+// вам надо написать более быструю оптимальную этой функции
 func FastSearch(out io.Writer) {
+<<<<<<< HEAD
 	file, err := os.Open(fPath)
 	if err != nil {
 		panic(err)
@@ -29,19 +20,14 @@ func FastSearch(out io.Writer) {
 
 	seenBrowsers := make(map[string]bool,256)
 
-	var users []User
-
-	for ;reader.Scan(); {
+	fmt.Fprintln(out, "found users:")
+	for i:=0;reader.Scan();i++ {
 		line := reader.Bytes()
 		user := User{}
 		user.UnmarshalJSON(line)
 		if err != nil {
 			panic(err)
 		}
-		users = append(users, user)
-	}
-	fmt.Fprintln(out, "found users:")
-	for i, user := range users {
 		isAndroid := false
 		isMSIE := false
 		for  _, browser := range user.Browsers {
@@ -61,3 +47,7 @@ func FastSearch(out io.Writer) {
 	}
 	fmt.Fprintln(out, "\nTotal unique browsers", len(seenBrowsers))
 }
+=======
+	SlowSearch(out)
+}
+>>>>>>> parent of 6fed1d4 (add hw3)
