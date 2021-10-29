@@ -63,7 +63,7 @@ type SearchClient struct {
 	URL string
 }
 
-// FindUsers отправляет запрос во внешнюю систему, которая непосредственно ищет пользоваталей
+// FindUsers отправляет запрос во внешнюю систему, которая непосредственно ищет пользователей
 func (srv *SearchClient) FindUsers(req SearchRequest) (*SearchResponse, error) {
 
 	searcherParams := url.Values{}
