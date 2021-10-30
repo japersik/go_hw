@@ -203,3 +203,45 @@ func TestStatusInternalServerError(t *testing.T) {
 		t.Error("StatusInternalServerError test failed")
 	}
 }
+
+func TestBadRequestWithoutErrorJson(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.WriteHeader(http.StatusBadRequest)
+	}))
+	defer ts.Close()
+	searchClient := &SearchClient{"",ts.URL}
+	_, err := searchClient.FindUsers(SearchRequest{})
+	if err == nil || !strings.Contains(err.Error(),"cant unpack error json") {
+		t.Error("BadRequestWithoutErrorJson test failed")
+	}
+}
+
+func SearchBadOrderField(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusBadRequest)
+	jsonResponse, _ := json.Marshal(SearchErrorResponse{Error:"ErrorBadOrderField"})
+	w.Write(jsonResponse)
+}
+func TestBadOrderField(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(SearchBadOrderField))
+	defer ts.Close()
+	searchClient := &SearchClient{"",ts.URL}
+	_, err := searchClient.FindUsers(SearchRequest{})
+	if err == nil || !strings.Contains(err.Error(),"OrderField") {
+		t.Error("BadOrderField test failed")
+	}
+}
+
+func SearchUnknownBadRequest(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusBadRequest)
+	jsonResponse, _ := json.Marshal(SearchErrorResponse{Error:"Unknown error"})
+	w.Write(jsonResponse)
+}
+func TestUnknownBadRequest(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(SearchUnknownBadRequest))
+	defer ts.Close()
+	searchClient := &SearchClient{"",ts.URL}
+	_, err := searchClient.FindUsers(SearchRequest{})
+	if err == nil || !strings.Contains(err.Error(),"unknown bad request error:") {
+		t.Error("UnknownBadRequest")
+	}
+}
