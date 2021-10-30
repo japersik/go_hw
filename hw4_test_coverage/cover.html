@@ -55,7 +55,7 @@
 			<div id="nav">
 				<select id="files">
 				
-				<option value="file0">hw_coursera/hw4_test_coverage/client.go (78.6%)</option>
+				<option value="file0">hw_coursera/hw4_test_coverage/client.go (83.3%)</option>
 				
 				</select>
 			</div>
@@ -166,7 +166,7 @@ func (srv *SearchClient) FindUsers(req SearchRequest) (*SearchResponse, error) <
                 if err, ok := err.(net.Error); ok &amp;&amp; err.Timeout() </span><span class="cov8" title="1">{
                         return nil, fmt.Errorf("timeout for %s", searcherParams.Encode())
                 }</span>
-                <span class="cov0" title="0">return nil, fmt.Errorf("unknown error %s", err)</span>
+                <span class="cov8" title="1">return nil, fmt.Errorf("unknown error %s", err)</span>
         }
         <span class="cov8" title="1">defer resp.Body.Close()
         body, err := ioutil.ReadAll(resp.Body)
@@ -174,7 +174,7 @@ func (srv *SearchClient) FindUsers(req SearchRequest) (*SearchResponse, error) <
         switch resp.StatusCode </span>{
         case http.StatusUnauthorized:<span class="cov8" title="1">
                 return nil, fmt.Errorf("Bad AccessToken")</span>
-        case http.StatusInternalServerError:<span class="cov0" title="0">
+        case http.StatusInternalServerError:<span class="cov8" title="1">
                 return nil, fmt.Errorf("SearchServer fatal error")</span>
         case http.StatusBadRequest:<span class="cov0" title="0">
                 errResp := SearchErrorResponse{}

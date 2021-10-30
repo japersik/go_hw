@@ -146,13 +146,11 @@ func TestIgnoreLimit(t *testing.T) {
 	}
 }
 
-func SearchBadJSON(w http.ResponseWriter, r *http.Request)  {
-	w.WriteHeader(http.StatusOK)
-	io.WriteString(w, `I'm not JSON'`)
-}
-
 func TestBadJSON(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(SearchBadJSON))
+	ts := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+		io.WriteString(writer, `I'm not JSON'`)
+	}))
 	defer ts.Close()
 	searchClient := &SearchClient{"",ts.URL}
 	_, err := searchClient.FindUsers(SearchRequest{})
@@ -161,12 +159,11 @@ func TestBadJSON(t *testing.T) {
 	}
 }
 
-func SearchTimeoutError(w http.ResponseWriter, r *http.Request)  {
-	time.Sleep(time.Second * 2)
-	w.WriteHeader(http.StatusOK)
-}
 func TestTimeout(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(SearchTimeoutError))
+	ts := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		time.Sleep(time.Second * 2)
+		writer.WriteHeader(http.StatusOK)
+	}))
 	defer ts.Close()
 	searchClient := &SearchClient{"",ts.URL}
 	_, err := searchClient.FindUsers(SearchRequest{})
@@ -175,15 +172,34 @@ func TestTimeout(t *testing.T) {
 	}
 }
 
-func SearchBadAccessToken(w http.ResponseWriter, r *http.Request)  {
-	w.WriteHeader(http.StatusUnauthorized)
-}
 func TestBadAccessToken(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(SearchBadAccessToken))
+	ts := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.WriteHeader(http.StatusUnauthorized)
+	}))
 	defer ts.Close()
 	searchClient := &SearchClient{"",ts.URL}
 	_, err := searchClient.FindUsers(SearchRequest{})
 	if err == nil || !strings.Contains(err.Error(),"Bad AccessToken") {
 		t.Error("Bad AccessToken test failed")
+	}
+}
+
+func TestUnknownError(t *testing.T) {
+	searchClient := &SearchClient{"","Err URL"}
+	_, err := searchClient.FindUsers(SearchRequest{})
+	if err == nil || !strings.Contains(err.Error(),"unknown error") {
+		t.Error("unknown error test failed")
+	}
+}
+
+func TestStatusInternalServerError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+	searchClient := &SearchClient{"",ts.URL}
+	_, err := searchClient.FindUsers(SearchRequest{})
+	if err == nil || !strings.Contains(err.Error(),"SearchServer fatal error") {
+		t.Error("StatusInternalServerError test failed")
 	}
 }
