@@ -8,7 +8,17 @@ import (
 	"go/token"
 	"log"
 	"os"
+	"reflect"
 	"strings"
+)
+
+const (
+	validRequired  = "required"
+	validParamName = "paramname"
+	validEnum      = "enum"
+	validDefault   = "default"
+	validMin       = "min"
+	validMax       = "max"
 )
 
 type apiMethod struct {
@@ -23,27 +33,68 @@ type apiFunc struct {
 	inArg    string
 	outArg   string
 }
-type tag struct {
-	t      string
-	params []string
-}
+
+type tagParams []string
 
 type field struct {
 	fieldType        string
 	fieldName        string
-	apiValidatorTags []tag
+	apiValidatorTags map[string]tagParams
 }
 
 type structInfo struct {
+	name   string
 	fields []field
 }
 type genApiInfo struct {
 	funcs        []apiFunc
-	validStructs []apiFunc
+	validStructs []structInfo
 }
 
 func parseConcreteStruct(currType *ast.TypeSpec, structType *ast.StructType, apiInfo *genApiInfo) {
-	fmt.Println(currType.Name, structType.Fields)
+	log.Printf("Parsing struct on position %d : %s  ", currType.Pos(), currType.Name.Name)
+	currentStructInfo := structInfo{}
+	currentStructInfo.name = currType.Name.Name
+	flagNeedToAdd := false
+	for _, f := range structType.Fields.List {
+		if idend, ok := f.Type.(*ast.Ident); !ok {
+			log.Println("Parsing struct breaking: '" + currType.Name.Name + "' -- parser  supports only string types")
+			break
+		} else {
+			for _, name := range f.Names {
+				fieldInfo := field{
+					fieldType:        idend.Name,
+					fieldName:        name.Name,
+					apiValidatorTags: map[string]tagParams{},
+				}
+				if f.Tag != nil {
+					tt := (reflect.StructTag)(strings.ReplaceAll(f.Tag.Value, "`", ""))
+					validTagString := tt.Get("apivalidator")
+					if len(validTagString) == 0 {
+						continue
+					}
+					flagNeedToAdd = true
+					validTags := strings.Split(validTagString, ",")
+					for _, tag := range validTags {
+						splitTag := strings.Split(tag, "=")
+						if len(splitTag) > 1 {
+							argsTag := strings.Split(splitTag[1], "|")
+							fieldInfo.apiValidatorTags[splitTag[0]] = argsTag
+						} else {
+							fieldInfo.apiValidatorTags[splitTag[0]] = nil
+						}
+					}
+				}
+				currentStructInfo.fields = append(currentStructInfo.fields, fieldInfo)
+			}
+		}
+	}
+	if flagNeedToAdd {
+		log.Printf("ok\n")
+		apiInfo.validStructs = append(apiInfo.validStructs, currentStructInfo)
+	} else {
+		log.Printf("validation params not found\n")
+	}
 }
 
 func parseStruct(decl *ast.GenDecl, apiInfo *genApiInfo) {
@@ -66,7 +117,7 @@ func parseFunc(decl *ast.FuncDecl, apiInfo *genApiInfo) {
 		if !strings.HasPrefix(elem.Text, "// apigen:api ") {
 			continue
 		}
-		log.Printf("Parsing on position %d : %s ", elem.Pos(), elem.Text)
+		log.Printf("Parsing func on position %d : %s ", elem.Pos(), elem.Text)
 		json.Unmarshal([]byte(strings.TrimPrefix(elem.Text, "// apigen:api ")), &funcInfo.apiMethod)
 
 		var recName string
@@ -147,4 +198,5 @@ func main() {
 
 	//Generating
 	fmt.Println(genApi.funcs)
+	fmt.Println(genApi.validStructs)
 }
