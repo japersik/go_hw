@@ -16,11 +16,30 @@ type apiMethod struct {
 	Auth   bool   `json:"auth"`
 	Method string `json:"method"`
 }
+
 type apiFunc struct {
 	apiMethod
 	receiver string
+	inArg    string
+	outArg   string
+}
+type tag struct {
+	t      string
+	params []string
+}
+
+type field struct {
+	fieldType        string
+	fieldName        string
+	apiValidatorTags []tag
+}
+
+type structInfo struct {
+	fields []field
 }
 type genApiInfo struct {
+	funcs        []apiFunc
+	validStructs []apiFunc
 }
 
 func parseConcreteStruct(currType *ast.TypeSpec, structType *ast.StructType, apiInfo *genApiInfo) {
@@ -47,7 +66,7 @@ func parseFunc(decl *ast.FuncDecl, apiInfo *genApiInfo) {
 		if !strings.HasPrefix(elem.Text, "// apigen:api ") {
 			continue
 		}
-
+		log.Printf("Parsing on position %d : %s ", elem.Pos(), elem.Text)
 		json.Unmarshal([]byte(strings.TrimPrefix(elem.Text, "// apigen:api ")), &funcInfo.apiMethod)
 
 		var recName string
@@ -63,9 +82,50 @@ func parseFunc(decl *ast.FuncDecl, apiInfo *genApiInfo) {
 			log.Println("Parsing error: '" + decl.Name.Name + "' function receiver not exist")
 		}
 		funcInfo.receiver = recName
+
+		var argName string
+		if decl.Type.Params != nil {
+			if len(decl.Type.Params.List) == 2 {
+				if selector, ok := decl.Type.Params.List[0].Type.(*ast.SelectorExpr); !ok || "Context" != selector.Sel.Name {
+					log.Println("Parsing error: '" + decl.Name.Name + "' type of first arg must be 'context.Context' ")
+				} else {
+					if indent, ok := decl.Type.Params.List[1].Type.(*ast.Ident); ok && len(decl.Type.Params.List[1].Names) == 1 {
+						argName = indent.Name
+					} else {
+						log.Println("Parsing error: '" + decl.Name.Name + "' type of second arg must struct ")
+					}
+				}
+			} else {
+				log.Println("Parsing error: '" + decl.Name.Name + "' function must have 2 arguments ")
+			}
+		} else {
+			log.Println("Parsing error: '" + decl.Name.Name + "' function receiver not exist")
+		}
+		funcInfo.inArg = argName
+
+		var outName string
+		if decl.Type.Results != nil {
+			if len(decl.Type.Results.List) == 2 {
+				if selector, ok := decl.Type.Results.List[1].Type.(*ast.Ident); !ok || "error" != selector.Name {
+					log.Println("Parsing error: '" + decl.Name.Name + "' type of second out must be 'error' ")
+				} else {
+					if starExpr, ok := decl.Type.Results.List[0].Type.(*ast.StarExpr); ok && len(decl.Type.Params.List[1].Names) == 1 {
+						outName = starExpr.X.(*ast.Ident).Obj.Name
+					} else {
+						log.Println("Parsing error: '" + decl.Name.Name + "' type of first arg must be starExpr of struct ")
+					}
+				}
+			} else {
+				log.Println("Parsing error: '" + decl.Name.Name + "' function must have 2 arguments ")
+			}
+		} else {
+			log.Println("Parsing error: '" + decl.Name.Name + "' function receiver not exist")
+		}
+		funcInfo.outArg = outName
 	}
-	fmt.Println(funcInfo)
+	apiInfo.funcs = append(apiInfo.funcs, funcInfo)
 }
+
 func main() {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, os.Args[1], nil, parser.ParseComments)
@@ -77,44 +137,14 @@ func main() {
 	for _, f := range file.Decls {
 		switch g := (f).(type) {
 		case *ast.GenDecl:
-			//parseStruct(g, genApi)
+			parseStruct(g, genApi)
 		case *ast.FuncDecl:
 			parseFunc(g, genApi)
 		default:
 			continue
 		}
-
-		//	for _, spec := range g.Specs {
-		//		fmt.Println("_______________")
-		//		cType, ok := spec.(*ast.TypeSpec)
-		//		if ok {
-		//			//fmt.Println(cType.Name)
-		//			//fmt.Println(cType)
-		//			switch stType := (cType.Type).(type) {
-		//			case *ast.StructType:
-		//				fmt.Println("Fields")
-		//				for _, field := range stType.Fields.List {
-		//					fmt.Printf("%s: ", field.Names[0].Name)
-		//					if field.Tag == nil {
-		//						continue
-		//					}
-		//					tag := reflect.StructTag(field.Tag.Value)
-		//					fmt.Println(tag)
-		//				}
-		//			case *ast.FuncType:
-		//				fmt.Println("!!!!!!!!!!!!!!!!!!!!!!!!!!")
-		//				fmt.Println(cType.Name)
-		//				fmt.Println(cType)
-		//			}
-		//
-		//		}
-		//	}
-		//case *ast.FuncDecl:
-		//	fmt.Println("!!!!!!!!!!!!!")
-		//	fmt.Println(g.Name.Name)
-		//	fmt.Println(g.Doc.Text())
-		//	fmt.Println("!!!!!!!!!!!!!")
-
 	}
-	// Generating
+
+	//Generating
+	fmt.Println(genApi.funcs)
 }
