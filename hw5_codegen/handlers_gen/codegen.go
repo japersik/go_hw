@@ -6,10 +6,12 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
 	"log"
 	"os"
 	"reflect"
 	"strings"
+	"text/template"
 )
 
 const (
@@ -21,6 +23,11 @@ const (
 	validMax       = "max"
 )
 
+const (
+	responseWriteFuncName = "responseWrite"
+	handlerPostfix        = "handler"
+)
+
 type apiMethod struct {
 	Url    string `json:"url"`
 	Auth   bool   `json:"auth"`
@@ -29,9 +36,10 @@ type apiMethod struct {
 
 type apiFunc struct {
 	apiMethod
-	receiver string
-	inArg    string
-	outArg   string
+	Name     string
+	Receiver string
+	InArg    string
+	OutArg   string
 }
 
 type tagParams []string
@@ -47,9 +55,40 @@ type structInfo struct {
 	fields []field
 }
 type genApiInfo struct {
-	funcs        []apiFunc
-	validStructs []structInfo
+	PackageName  string
+	Funcs        map[string][]apiFunc
+	ValidStructs []structInfo
 }
+
+var (
+	TempResponseWrite = template.Must(template.New("TempResponseWrite").Parse(`
+func ` + responseWriteFuncName + `(w http.ResponseWriter, r *http.Request, obj interface{},statusCode int) {
+	w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(statusCode)
+	b,_:= json.Marshal(obj)
+	w.Write(b)
+}`))
+
+	TempServeHTTP = template.Must(template.New("TempServeHTTP").Parse(`
+{{ range $key, $val := .Funcs }}
+func (api *{{ $key }} ) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Path {
+	{{range $val }} case "{{ .Url }}":
+		api.` + handlerPostfix + `{{ .Name }}(w,r)
+	{{end}} default:
+		` + responseWriteFuncName + `(w,r,"some error",http.StatusBadRequest)
+	}
+}
+{{end}}`))
+	TempHandleFunc = template.Must(template.New("TempServeHTTP").Parse(`
+{{ range $key, $val := .Funcs }}
+{{range $val }} 
+func (api *{{ $key }} ) ` + handlerPostfix + `{{ .Name }}(w http.ResponseWriter, r *http.Request) {
+	//write Body
+}
+{{end}}
+{{end}}`))
+)
 
 func parseConcreteStruct(currType *ast.TypeSpec, structType *ast.StructType, apiInfo *genApiInfo) {
 	log.Printf("Parsing struct on position %d : %s  ", currType.Pos(), currType.Name.Name)
@@ -91,7 +130,7 @@ func parseConcreteStruct(currType *ast.TypeSpec, structType *ast.StructType, api
 	}
 	if flagNeedToAdd {
 		log.Printf("ok\n")
-		apiInfo.validStructs = append(apiInfo.validStructs, currentStructInfo)
+		apiInfo.ValidStructs = append(apiInfo.ValidStructs, currentStructInfo)
 	} else {
 		log.Printf("validation params not found\n")
 	}
@@ -119,7 +158,7 @@ func parseFunc(decl *ast.FuncDecl, apiInfo *genApiInfo) {
 		}
 		log.Printf("Parsing func on position %d : %s ", elem.Pos(), elem.Text)
 		json.Unmarshal([]byte(strings.TrimPrefix(elem.Text, "// apigen:api ")), &funcInfo.apiMethod)
-
+		funcInfo.Name = decl.Name.Name
 		var recName string
 		if decl.Recv != nil {
 			if dl, ok := decl.Recv.List[0].Type.(*ast.StarExpr); ok {
@@ -127,12 +166,12 @@ func parseFunc(decl *ast.FuncDecl, apiInfo *genApiInfo) {
 			} else if dl, ok := decl.Recv.List[0].Type.(*ast.Ident); ok {
 				recName = dl.Obj.Name
 			} else {
-				log.Println("Parsing error: '" + decl.Name.Name + "' function receiver type error")
+				log.Println("Parsing error: '" + decl.Name.Name + "' function Receiver type error")
 			}
 		} else {
-			log.Println("Parsing error: '" + decl.Name.Name + "' function receiver not exist")
+			log.Println("Parsing error: '" + decl.Name.Name + "' function Receiver not exist")
 		}
-		funcInfo.receiver = recName
+		funcInfo.Receiver = recName
 
 		var argName string
 		if decl.Type.Params != nil {
@@ -150,9 +189,9 @@ func parseFunc(decl *ast.FuncDecl, apiInfo *genApiInfo) {
 				log.Println("Parsing error: '" + decl.Name.Name + "' function must have 2 arguments ")
 			}
 		} else {
-			log.Println("Parsing error: '" + decl.Name.Name + "' function receiver not exist")
+			log.Println("Parsing error: '" + decl.Name.Name + "' function Receiver not exist")
 		}
-		funcInfo.inArg = argName
+		funcInfo.InArg = argName
 
 		var outName string
 		if decl.Type.Results != nil {
@@ -170,21 +209,56 @@ func parseFunc(decl *ast.FuncDecl, apiInfo *genApiInfo) {
 				log.Println("Parsing error: '" + decl.Name.Name + "' function must have 2 arguments ")
 			}
 		} else {
-			log.Println("Parsing error: '" + decl.Name.Name + "' function receiver not exist")
+			log.Println("Parsing error: '" + decl.Name.Name + "' function Receiver not exist")
 		}
-		funcInfo.outArg = outName
+		funcInfo.OutArg = outName
 	}
-	apiInfo.funcs = append(apiInfo.funcs, funcInfo)
+	if apiInfo.Funcs[funcInfo.Receiver] == nil {
+		apiInfo.Funcs[funcInfo.Receiver] = make([]apiFunc, 0)
+	}
+	apiInfo.Funcs[funcInfo.Receiver] = append(apiInfo.Funcs[funcInfo.Receiver], funcInfo)
 }
 
+func genWriteHead(pkgName string, writer io.Writer) {
+	fmt.Fprintf(writer, "package %s\n\n", pkgName)
+	fmt.Fprintf(writer, `import (
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"encoding/json"
+     )
+
+`)
+}
+func generate(apiInfo *genApiInfo, writer io.Writer) {
+	genWriteHead(apiInfo.PackageName, writer)
+	TempServeHTTP.Execute(writer, apiInfo)
+	TempHandleFunc.Execute(writer, apiInfo)
+	TempResponseWrite.Execute(writer, nil)
+}
 func main() {
+	if len(os.Args) < 3 {
+		fmt.Printf("Usage: %s [input_file] [output_file]", os.Args[0])
+		return
+	}
+
+	outFile, err := os.Create(os.Args[2])
+	if err != nil {
+		log.Printf("Open output file error: %s", err)
+		return
+	}
+	defer outFile.Close()
+
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, os.Args[1], nil, parser.ParseComments)
 	if err != nil {
 		log.Fatal(err)
 	}
 	genApi := new(genApiInfo)
-	// parsing
+	genApi.PackageName = file.Name.Name
+	genApi.Funcs = make(map[string][]apiFunc, 0)
+	// Parsing
 	for _, f := range file.Decls {
 		switch g := (f).(type) {
 		case *ast.GenDecl:
@@ -197,6 +271,8 @@ func main() {
 	}
 
 	//Generating
-	fmt.Println(genApi.funcs)
-	fmt.Println(genApi.validStructs)
+
+	fmt.Println(genApi.Funcs)
+	fmt.Println(genApi.ValidStructs)
+	generate(genApi, outFile)
 }
