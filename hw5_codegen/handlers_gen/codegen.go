@@ -14,55 +14,54 @@ import (
 	"text/template"
 )
 
-const (
-	validRequired  = "required"
-	validParamName = "paramname"
-	validEnum      = "enum"
-	validDefault   = "default"
-	validMin       = "min"
-	validMax       = "max"
-)
+//const (
+//	validRequired  = "required"
+//	validParamName = "paramname"
+//	validEnum      = "enum"
+//	validDefault   = "default"
+//	validMin       = "min"
+//	validMax       = "max"
+//)
+//
+//const (
+//	responseWriteFuncName = "responseWrite"
+//	handlerPostfix        = "handler"
+//)
 
-const (
-	responseWriteFuncName = "responseWrite"
-	handlerPostfix        = "handler"
-)
-
-type apiMethod struct {
+type ApiMethod struct {
 	Url    string `json:"url"`
 	Auth   bool   `json:"auth"`
 	Method string `json:"method"`
 }
 
-type apiFunc struct {
-	apiMethod
+type ApiFunc struct {
+	ApiMethod
 	Name     string
 	Receiver string
 	InArg    string
 	OutArg   string
 }
 
-type tagParams []string
+type TagParams []string
 
-type field struct {
-	fieldType        string
-	fieldName        string
-	apiValidatorTags map[string]tagParams
+type Field struct {
+	FieldType        string
+	FieldName        string
+	ApiValidatorTags map[string]TagParams
 }
 
-type structInfo struct {
-	name   string
-	fields []field
+type StructInfo struct {
+	Fields []Field
 }
-type genApiInfo struct {
+type GenApiInfo struct {
 	PackageName  string
-	Funcs        map[string][]apiFunc
-	ValidStructs []structInfo
+	Funcs        map[string][]ApiFunc
+	ValidStructs map[string]StructInfo
 }
 
 var (
 	TempResponseWrite = template.Must(template.New("TempResponseWrite").Parse(`
-func ` + responseWriteFuncName + `(w http.ResponseWriter, r *http.Request, obj interface{},statusCode int) {
+func responseWrite(w http.ResponseWriter, r *http.Request, obj interface{},statusCode int) {
 	w.Header().Set("Content-Type", "application/json")
     w.WriteHeader(statusCode)
 	b,_:= json.Marshal(obj)
@@ -74,26 +73,47 @@ func ` + responseWriteFuncName + `(w http.ResponseWriter, r *http.Request, obj i
 func (api *{{ $key }} ) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	{{range $val }} case "{{ .Url }}":
-		api.` + handlerPostfix + `{{ .Name }}(w,r)
+		api.handler{{ .Name }}(w,r)
 	{{end}} default:
-		` + responseWriteFuncName + `(w,r,"some error",http.StatusBadRequest)
+		responseWrite(w,r,ErrorAns{"unknown method"}, http.StatusNotFound)
 	}
 }
 {{end}}`))
-	TempHandleFunc = template.Must(template.New("TempServeHTTP").Parse(`
-{{ range $key, $val := .Funcs }}
-{{range $val }} 
-func (api *{{ $key }} ) ` + handlerPostfix + `{{ .Name }}(w http.ResponseWriter, r *http.Request) {
-	//write Body
+	TempHandleFunc = template.Must(template.New("TempServeHTTP").Funcs(template.FuncMap{
+		"toLower": func(in string) string {
+			return strings.ToLower(in)
+		},
+	}).Parse(`{{- /*gotype: github.com/japersik/go_hw/hw5_codegen/handlers_gen.GenApiInfo*/ -}}
+{{ range $key, $val := .Funcs }}{{range $v := $val }} 
+func (api *{{ $key }} ) handler{{ $v.Name }}(w http.ResponseWriter, r *http.Request) {
+    {{if $v.ApiMethod.Auth}}//checkAuth
+    if r.Header.Get("X-Auth") != "100500" {
+    responseWrite(w,r,ErrorAns{"unauthorized"},http.StatusForbidden)
+    }{{end}}
+	r.ParseForm()
+	{{$v.InArg | toLower}} :={{$v.InArg}}{}
+{{with (index $.ValidStructs ($v.InArg))}}
+    {{- /*gotype: github.com/japersik/go_hw/hw5_codegen/handlers_gen.StructInfo*/ -}}
+    {{$name := ""}}{{ range .Fields}}{{if .ApiValidatorTags.paramname}} {{ $name = index .ApiValidatorTags.paramname 0}}{{else}}{{$name = .FieldName | toLower}}{{end}}
+    //{{.FieldName}} --> {{$name}}
+    {{if (eq .FieldType  "int")}}{{.FieldName | toLower}},err := strconv.Atoi(r.Form.Get("{{$name}}"))
+    if err!=nil{
+        responseWrite(w,r,ErrorAns{"{{$name}} must be int"}, http.StatusBadRequest)
+        return
+    }
+    {{else}}{{.FieldName | toLower}} := r.Form.Get("{{$name}}"){{end}}
+	{{$v.InArg | toLower}}.{{.FieldName}} = {{.FieldName | toLower}}
+    {{end}}{{end}}
+    responseWrite(w,r,SomeAns{Ans:{{$v.InArg | toLower}}}, http.StatusOK)
 }
 {{end}}
 {{end}}`))
+	TempResponseStruct = template.Must(template.New("TempResponseStruct").Parse("type ErrorAns struct {\n\tErr string `json:\"error\"`\n}\n\ntype SomeAns struct {\n\tErrorAns\n\tAns interface{} `json:\"response\"`\n}"))
 )
 
-func parseConcreteStruct(currType *ast.TypeSpec, structType *ast.StructType, apiInfo *genApiInfo) {
+func parseConcreteStruct(currType *ast.TypeSpec, structType *ast.StructType, apiInfo *GenApiInfo) {
 	log.Printf("Parsing struct on position %d : %s  ", currType.Pos(), currType.Name.Name)
-	currentStructInfo := structInfo{}
-	currentStructInfo.name = currType.Name.Name
+	currentStructInfo := StructInfo{}
 	flagNeedToAdd := false
 	for _, f := range structType.Fields.List {
 		if idend, ok := f.Type.(*ast.Ident); !ok {
@@ -101,10 +121,10 @@ func parseConcreteStruct(currType *ast.TypeSpec, structType *ast.StructType, api
 			break
 		} else {
 			for _, name := range f.Names {
-				fieldInfo := field{
-					fieldType:        idend.Name,
-					fieldName:        name.Name,
-					apiValidatorTags: map[string]tagParams{},
+				fieldInfo := Field{
+					FieldType:        idend.Name,
+					FieldName:        name.Name,
+					ApiValidatorTags: map[string]TagParams{},
 				}
 				if f.Tag != nil {
 					tt := (reflect.StructTag)(strings.ReplaceAll(f.Tag.Value, "`", ""))
@@ -118,25 +138,26 @@ func parseConcreteStruct(currType *ast.TypeSpec, structType *ast.StructType, api
 						splitTag := strings.Split(tag, "=")
 						if len(splitTag) > 1 {
 							argsTag := strings.Split(splitTag[1], "|")
-							fieldInfo.apiValidatorTags[splitTag[0]] = argsTag
+							fieldInfo.ApiValidatorTags[splitTag[0]] = argsTag
 						} else {
-							fieldInfo.apiValidatorTags[splitTag[0]] = nil
+							fieldInfo.ApiValidatorTags[splitTag[0]] = nil
 						}
 					}
 				}
-				currentStructInfo.fields = append(currentStructInfo.fields, fieldInfo)
+				currentStructInfo.Fields = append(currentStructInfo.Fields, fieldInfo)
 			}
 		}
 	}
 	if flagNeedToAdd {
 		log.Printf("ok\n")
-		apiInfo.ValidStructs = append(apiInfo.ValidStructs, currentStructInfo)
+		apiInfo.ValidStructs[currType.Name.Name] = currentStructInfo
 	} else {
 		log.Printf("validation params not found\n")
 	}
+
 }
 
-func parseStruct(decl *ast.GenDecl, apiInfo *genApiInfo) {
+func parseStruct(decl *ast.GenDecl, apiInfo *GenApiInfo) {
 	for _, spec := range decl.Specs {
 		currType, ok := spec.(*ast.TypeSpec)
 		if ok {
@@ -147,8 +168,8 @@ func parseStruct(decl *ast.GenDecl, apiInfo *genApiInfo) {
 		}
 	}
 }
-func parseFunc(decl *ast.FuncDecl, apiInfo *genApiInfo) {
-	var funcInfo = apiFunc{}
+func parseFunc(decl *ast.FuncDecl, apiInfo *GenApiInfo) {
+	var funcInfo = ApiFunc{}
 	if decl.Doc == nil {
 		return
 	}
@@ -157,7 +178,7 @@ func parseFunc(decl *ast.FuncDecl, apiInfo *genApiInfo) {
 			continue
 		}
 		log.Printf("Parsing func on position %d : %s ", elem.Pos(), elem.Text)
-		json.Unmarshal([]byte(strings.TrimPrefix(elem.Text, "// apigen:api ")), &funcInfo.apiMethod)
+		json.Unmarshal([]byte(strings.TrimPrefix(elem.Text, "// apigen:api ")), &funcInfo.ApiMethod)
 		funcInfo.Name = decl.Name.Name
 		var recName string
 		if decl.Recv != nil {
@@ -214,7 +235,7 @@ func parseFunc(decl *ast.FuncDecl, apiInfo *genApiInfo) {
 		funcInfo.OutArg = outName
 	}
 	if apiInfo.Funcs[funcInfo.Receiver] == nil {
-		apiInfo.Funcs[funcInfo.Receiver] = make([]apiFunc, 0)
+		apiInfo.Funcs[funcInfo.Receiver] = make([]ApiFunc, 0)
 	}
 	apiInfo.Funcs[funcInfo.Receiver] = append(apiInfo.Funcs[funcInfo.Receiver], funcInfo)
 }
@@ -225,17 +246,20 @@ func genWriteHead(pkgName string, writer io.Writer) {
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
+	"strconv"
 	"encoding/json"
      )
 
 `)
 }
-func generate(apiInfo *genApiInfo, writer io.Writer) {
+func generate(apiInfo *GenApiInfo, writer io.Writer) {
 	genWriteHead(apiInfo.PackageName, writer)
+	TempResponseStruct.Execute(writer, nil)
 	TempServeHTTP.Execute(writer, apiInfo)
-	TempHandleFunc.Execute(writer, apiInfo)
+	err := TempHandleFunc.Execute(writer, apiInfo)
+	fmt.Println(err)
 	TempResponseWrite.Execute(writer, nil)
+
 }
 func main() {
 	if len(os.Args) < 3 {
@@ -255,9 +279,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	genApi := new(genApiInfo)
+	genApi := new(GenApiInfo)
 	genApi.PackageName = file.Name.Name
-	genApi.Funcs = make(map[string][]apiFunc, 0)
+	genApi.Funcs = make(map[string][]ApiFunc, 0)
+	genApi.ValidStructs = make(map[string]StructInfo, 0)
 	// Parsing
 	for _, f := range file.Decls {
 		switch g := (f).(type) {
@@ -272,7 +297,7 @@ func main() {
 
 	//Generating
 
-	fmt.Println(genApi.Funcs)
-	fmt.Println(genApi.ValidStructs)
+	//fmt.Println(genApi.Funcs)
+	fmt.Println(genApi.ValidStructs["ProfileParams"])
 	generate(genApi, outFile)
 }
