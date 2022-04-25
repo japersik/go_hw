@@ -36,34 +36,49 @@ func (api *OtherApi) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *MyApi) handlerProfile(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	r.ParseForm()
 	profileparams := ProfileParams{}
 
 	//Login --> login
 	login := r.Form.Get("login")
 	profileparams.Login = login
-
 	if login == "" {
 		responseWrite(w, r, ErrorAns{"login must be not empty"}, http.StatusBadRequest)
 		return
 	}
 
-	responseWrite(w, r, SomeAns{Ans: profileparams}, http.StatusOK)
+	ans, err := api.Profile(ctx, profileparams)
+	if err != nil {
+		if apiErr, ok := err.(ApiError); ok {
+			responseWrite(w, r, ErrorAns{apiErr.Error()}, apiErr.HTTPStatus)
+		} else {
+			responseWrite(w, r, ErrorAns{err.Error()}, http.StatusInternalServerError)
+		}
+	} else {
+		responseWrite(w, r, SomeAns{Ans: ans}, http.StatusOK)
+	}
 }
 
 func (api *MyApi) handlerCreate(w http.ResponseWriter, r *http.Request) {
-	//checkAuth
+	ctx := r.Context()
+	// check auth
 	if r.Header.Get("X-Auth") != "100500" {
 		responseWrite(w, r, ErrorAns{"unauthorized"}, http.StatusForbidden)
 		return
 	}
+	// check method
+	if r.Method != "POST" {
+		responseWrite(w, r, ErrorAns{"bad method"}, http.StatusNotAcceptable)
+		return
+	}
+
 	r.ParseForm()
 	createparams := CreateParams{}
 
 	//Login --> login
 	login := r.Form.Get("login")
 	createparams.Login = login
-
 	if login == "" {
 		responseWrite(w, r, ErrorAns{"login must be not empty"}, http.StatusBadRequest)
 		return
@@ -105,23 +120,37 @@ func (api *MyApi) handlerCreate(w http.ResponseWriter, r *http.Request) {
 		responseWrite(w, r, ErrorAns{"age must be >= 0"}, http.StatusBadRequest)
 		return
 	}
-
-	responseWrite(w, r, SomeAns{Ans: createparams}, http.StatusOK)
+	ans, err := api.Create(ctx, createparams)
+	if err != nil {
+		if apiErr, ok := err.(ApiError); ok {
+			responseWrite(w, r, ErrorAns{apiErr.Error()}, apiErr.HTTPStatus)
+		} else {
+			responseWrite(w, r, ErrorAns{err.Error()}, http.StatusInternalServerError)
+		}
+	} else {
+		responseWrite(w, r, SomeAns{Ans: ans}, http.StatusOK)
+	}
 }
 
 func (api *OtherApi) handlerCreate(w http.ResponseWriter, r *http.Request) {
-	//checkAuth
+	ctx := r.Context()
+	// check auth
 	if r.Header.Get("X-Auth") != "100500" {
 		responseWrite(w, r, ErrorAns{"unauthorized"}, http.StatusForbidden)
 		return
 	}
+	// check method
+	if r.Method != "POST" {
+		responseWrite(w, r, ErrorAns{"bad method"}, http.StatusNotAcceptable)
+		return
+	}
+
 	r.ParseForm()
 	othercreateparams := OtherCreateParams{}
 
 	//Username --> username
 	username := r.Form.Get("username")
 	othercreateparams.Username = username
-
 	if username == "" {
 		responseWrite(w, r, ErrorAns{"username must be not empty"}, http.StatusBadRequest)
 		return
@@ -163,8 +192,16 @@ func (api *OtherApi) handlerCreate(w http.ResponseWriter, r *http.Request) {
 		responseWrite(w, r, ErrorAns{"level must be >= 1"}, http.StatusBadRequest)
 		return
 	}
-
-	responseWrite(w, r, SomeAns{Ans: othercreateparams}, http.StatusOK)
+	ans, err := api.Create(ctx, othercreateparams)
+	if err != nil {
+		if apiErr, ok := err.(ApiError); ok {
+			responseWrite(w, r, ErrorAns{apiErr.Error()}, apiErr.HTTPStatus)
+		} else {
+			responseWrite(w, r, ErrorAns{err.Error()}, http.StatusInternalServerError)
+		}
+	} else {
+		responseWrite(w, r, SomeAns{Ans: ans}, http.StatusOK)
+	}
 }
 
 func responseWrite(w http.ResponseWriter, r *http.Request, obj interface{}, statusCode int) {

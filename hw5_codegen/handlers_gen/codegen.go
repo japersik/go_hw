@@ -83,19 +83,28 @@ func (api *{{ $key }} ) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"toLower": func(in string) string {
 			return strings.ToLower(in)
 		},
+		"toUpper": func(in string) string {
+			return strings.ToUpper(in)
+		},
 		"joinComma": func(req []string) string { return strings.Join(req, ", ") },
 	}).Parse(`{{- /*gotype: github.com/japersik/go_hw/hw5_codegen/handlers_gen.GenApiInfo*/ -}}
 {{ range $key, $val := .Funcs }}{{range $v := $val }} 
 func (api *{{ $key }}) handler{{ $v.Name }}(w http.ResponseWriter, r *http.Request) {
-    {{if $v.ApiMethod.Auth}}//checkAuth
+    ctx := r.Context()
+    {{if $v.ApiMethod.Auth}}// check auth
     if r.Header.Get("X-Auth") != "100500" {
         responseWrite(w, r, ErrorAns{"unauthorized"}, http.StatusForbidden)
         return
     }
+    {{if $v.ApiMethod}}// check method
+	if r.Method != "{{$v.ApiMethod.Method | toUpper}}"{
+        responseWrite(w, r, ErrorAns{"bad method"}, http.StatusNotAcceptable)
+        return
+	}
+{{end}}
     {{end}}r.ParseForm()
-	{{$v.InArg | toLower}} :={{$v.InArg}}{}
-{{with (index $.ValidStructs ($v.InArg))}}
-    {{- /*gotype: github.com/japersik/go_hw/hw5_codegen/handlers_gen.StructInfo*/ -}}
+	{{$v.InArg | toLower}} := {{$v.InArg}}{}
+{{with (index $.ValidStructs ($v.InArg))}}{{- /*gotype: github.com/japersik/go_hw/hw5_codegen/handlers_gen.StructInfo*/ -}}
     {{$name := ""}}{{ range $field := .Fields}}{{if .ApiValidatorTags.paramname}} {{ $name = index .ApiValidatorTags.paramname 0}}{{else}}{{$name = .FieldName | toLower}}{{end}}
     //{{.FieldName}} --> {{$name}}
     {{if (eq .FieldType  "int")}}{{.FieldName | toLower}},err := strconv.Atoi(r.Form.Get("{{$name}}"))
@@ -104,11 +113,10 @@ func (api *{{ $key }}) handler{{ $v.Name }}(w http.ResponseWriter, r *http.Reque
         return
     }{{else}}{{.FieldName | toLower}} := r.Form.Get("{{$name}}"){{end}}
 	{{$v.InArg | toLower}}.{{.FieldName}} = {{.FieldName | toLower}}
-{{range $keyTag, $values:= .ApiValidatorTags }}{{if eq $keyTag "default"}}{{if (eq $field.FieldType "int")}}if {{$field.FieldName | toLower}} == 0{ 
+	{{range $keyTag, $values:= .ApiValidatorTags }}{{if eq $keyTag "default"}}{{if (eq $field.FieldType "int")}}if {{$field.FieldName | toLower}} == 0{ 
     {{$field.FieldName | toLower}} = {{index $values 0 }}{{else}}if {{$field.FieldName | toLower}} == "" { 
         {{$field.FieldName | toLower}} = "{{index $values 0 }}"{{end}} 
-    }{{end}}
-    {{if eq $keyTag "required"}}{{if (eq $field.FieldType "int")}}if {{$field.FieldName | toLower}} == 0 { {{else}}if {{$field.FieldName | toLower}} == "" { {{end}}
+    }{{end}}{{if eq $keyTag "required"}}{{if (eq $field.FieldType "int")}}if {{$field.FieldName | toLower}} == 0 { {{else}}if {{$field.FieldName | toLower}} == "" { {{end}}
         responseWrite(w,r,ErrorAns{"{{$name}} must be not empty"}, http.StatusBadRequest)
         return
     }{{end}}{{end}}
@@ -122,9 +130,17 @@ func (api *{{ $key }}) handler{{ $v.Name }}(w http.ResponseWriter, r *http.Reque
     }{{end}}{{if eq $keyTag "enum"}}if !({{ $addtext := ""}}{{if (eq $field.FieldType "int")}} ({{range $enumval:= $values}}{{$field.FieldName | toLower}}  == {{$enumval}}{{end}}) || {{else}}{{range $enumval:= $values}}{{$field.FieldName | toLower}}  == "{{$enumval}}" || {{end}} {{end}}false){
         responseWrite(w,r,ErrorAns{"{{$name}} must be one of [{{$values | joinComma}}]"}, http.StatusBadRequest)
         return
-    }{{end}}{{end}}{{end}}
-{{end}}
-    responseWrite(w,r,SomeAns{Ans:{{$v.InArg | toLower}}}, http.StatusOK)
+    }{{end}}{{end}}{{end}}{{end}}
+	ans, err := api.{{$v.Name}}(ctx, {{$v.InArg | toLower}} )
+    if err != nil {
+		if apiErr, ok := err.(ApiError); ok {
+			responseWrite(w, r, ErrorAns{apiErr.Error()}, apiErr.HTTPStatus)
+		} else {
+			responseWrite(w, r, ErrorAns{err.Error()}, http.StatusInternalServerError)
+		}
+	} else {
+		responseWrite(w, r, SomeAns{Ans: ans}, http.StatusOK)
+	}
 }
 {{end}}
 {{end}}`))
